@@ -2,12 +2,12 @@
 import collections
 import math
 import random
-import time
 
 import numpy as np
 import pandas
-import stumpy
+import requests
 import ta
+import datetime
 import yfinance as yf
 from scipy.stats import linregress, norm
 from stockstats import StockDataFrame
@@ -19,8 +19,6 @@ class StockEngine():
     '''
     The Stock Engine collects stock data, calculates financial indicators and
     performs stock screening analysis.
-    TODO:
-        - Introduce IEXCloud live data streaming
     '''
 
     def __init__(self):
@@ -49,6 +47,12 @@ class StockEngine():
             "total_revenue": "Total Revenue",
             "total_operating_expenses": "Total Operating Expenses",
             "cost_of_revenue": "Cost Of Revenue"
+        }
+
+        self.IEX_CONFIG = {
+            "iex_test": "IEX_SANDBOX_TOKEN",
+            "iex_prod": "IEX_PRODUCTION_TOKEN",
+            "selection": "cloud"
         }
 
     def get_fundamentals(self, ticker):
@@ -111,10 +115,10 @@ class StockEngine():
         hists = [5, 10, 15]
         for history in hists:
 
-            rsi = rsi = ta.momentum.RSIIndicator(
-                df['close'], n=history, fillna=True).rsi().values.tolist()
+            rsi = ta.momentum.RSIIndicator(
+                df['close'], window=history, fillna=True).rsi().values.tolist()
             stochastic = ta.momentum.StochasticOscillator(
-                df['high'], df['low'], df['close'], n=history, d_n=int(history/3), fillna=True).stoch().values.tolist()
+                df['high'], df['low'], df['close'], window=history, smooth_window=int(history/3), fillna=True).stoch().values.tolist()
 
             rsi_slope, rsi_r_val, rsi_p_val = self.regressive_slope(
                 rsi[-n_timeframe:])
@@ -140,9 +144,9 @@ class StockEngine():
         hists = [5, 10, 20]
         for history in hists:
             eom = ta.volume.ease_of_movement(
-                df['high'], df['low'], df['volume'], n=history, fillna=True).values.tolist()
+                df['high'], df['low'], df['volume'], window=history, fillna=True).values.tolist()
             cci = ta.trend.cci(df['high'], df['low'], df['close'],
-                               n=history, c=0.015, fillna=True).values.tolist()
+                               window=history, constant=0.015, fillna=True).values.tolist()
 
             eom_slope, eom_r_val, eom_p_val = self.regressive_slope(
                 eom[-n_timeframe:])
@@ -210,6 +214,48 @@ class StockEngine():
             return robject
         except:
             return False
+
+    def iex_get_data(self, tickers, start_time=False, end_time=False):
+        """
+        Retrieves time series data from IEXCloud given the starting date
+        and the ending date to get data from
+
+        Parameters:
+            - ticker (str|list)
+            - start_time (datetime) :: The starting datetime 
+            - end_time (date) :: The ending datetime
+        """
+        if isinstance(tickers, str):
+            tickers = [tickers]
+
+        if not isinstance(tickers, list):
+            raise Exception("tickers must be of type list")
+
+        results = {}
+
+        for tick in tickers:
+            # generate the url & send the request
+            endpoint = self._iex_api_url(tick, start_time, end_time)
+            resp = requests.get(endpoint)
+            json = resp.json()
+            if not isinstance(json, list):
+                # error parsing
+                if "error" in json:
+                    results[tick] = None
+                continue
+
+            results[tick] = []
+
+            for r in json:
+                results[tick].append({
+                    "date": datetime.datetime.fromtimestamp(r['date']/1000.0),
+                    "open": r['open'],
+                    "high": r['high'],
+                    "low": r['low'],
+                    "close": r['close'],
+                    "volume": r['volume']
+                })
+        return results
 
     def macd_indicator(self, timeseries):
         """
@@ -396,7 +442,7 @@ class StockEngine():
             ranked_output[stock] = rank
         return (sorted(ranked_output.items(), key=lambda x: x[1], reverse=True))
 
-    def top_increase(self, db, period=5,):
+    def top_increase(self, db, period=5):
         """
         Calculates and returns stocks with the largest price increase given 
         the period. The price increase is then returned along with the ticker
@@ -517,3 +563,23 @@ class StockEngine():
                 increase_rate = pchange
                 rank = i
         return increase_rate, rank
+
+    def _iex_api_url(self, ticker, start_date=False, end_date=False):
+        base_url = "https://{}.iexapis.com/stable/time-series/HISTORICAL_PRICES/{}"
+        base_url = base_url.format(self.IEX_CONFIG['selection'], ticker)
+
+        if start_date:
+            if isinstance(start_date, datetime.datetime):
+                start_date = datetime.datetime.strftime(start_date, "%Y-%m-%d")
+            base_url += "?from={}".format(start_date)
+
+        if end_date:
+            if isinstance(end_date, datetime.datetime):
+                end_date = datetime.datetime.strftime(end_date, "%Y-%m-%d")
+            base_url += "?" if not start_date else "&"
+            base_url += "to={}".format(end_date)
+
+        base_url += "?" if not (start_date or end_date) else "&"
+        base_url += "token={}".format(self.IEX_CONFIG['iex_prod'])
+
+        return base_url
