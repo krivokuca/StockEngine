@@ -54,7 +54,6 @@ class StockEngine():
             "iex_prod": "IEX_PRODUCTION_TOKEN",
             "selection": "cloud"
         }
-
     def get_fundamentals(self, ticker):
         """
         Returns the fundamentals for a given stock in a dict
@@ -340,7 +339,7 @@ class StockEngine():
         average_vol_last_twenty_days = np.mean(
             [volume_by_date_dictionary[date] for date in all_dates[1:20]])
 
-        return latest_data_point, _fmt_num(today_volume), _fmt_num(average_vol_last_five_days), _fmt_num(average_vol_last_twenty_days)
+        return latest_data_point, today_volume, average_vol_last_five_days, average_vol_last_twenty_days
 
     def volatility(self, timeseries, timeframe=252, dataframe=False):
         """
